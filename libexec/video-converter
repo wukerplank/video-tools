@@ -1,11 +1,9 @@
 #!/usr/bin/env ruby
 
 require 'bundler/setup'
-require 'json'
 require 'logger'
 require 'fileutils'
 require 'pathname'
-require 'time'
 require 'tmpdir'
 require 'open3'
 require 'slop'
@@ -17,14 +15,11 @@ class VideoConverter
 
   def initialize(directory, options = {})
     @directory = Pathname.new(directory)
-    @log_entries = []
-    @log_filename = Time.now.strftime("%Y-%m-%d_%H-%M-%S.json")
     @options = options
   end
 
   def process_directory
     puts "Processing directory: #{@directory}"
-    puts "Log file: #{@log_filename}"
 
     video_files = find_video_files
     puts "Found #{video_files.length} video files"
@@ -32,8 +27,6 @@ class VideoConverter
     video_files.each do |file_path|
       process_video_file(file_path)
     end
-
-    write_log_file
   end
 
   private
@@ -55,8 +48,6 @@ class VideoConverter
 
       if should_skip_hevc?(video_info)
         puts "  Skipping HEVC file: #{file_path.basename}"
-        log_entry = create_log_entry(file_path, video_info, nil, "Skipped - already HEVC")
-        @log_entries << log_entry
         return
       end
 
@@ -64,19 +55,12 @@ class VideoConverter
 
       if conversion_result[:success]
         puts "  Converted: #{file_path.basename}"
-        log_entry = create_log_entry(file_path, video_info, conversion_result[:converted_info], conversion_result[:log])
-        @log_entries << log_entry
       else
         puts "  Conversion failed: #{file_path.basename}"
-        log_entry = create_log_entry(file_path, video_info, nil, conversion_result[:log])
-        @log_entries << log_entry
       end
 
     rescue => e
       puts "  Error processing #{file_path.basename}: #{e.message}"
-      error_info = { filename: file_path.basename.to_s, codec: "unknown", resolution: "unknown", filesize: 0 }
-      log_entry = create_log_entry(file_path, error_info, nil, "Error: #{e.message}")
-      @log_entries << log_entry
     end
   end
 
@@ -157,11 +141,8 @@ class VideoConverter
     tomp4_script = Pathname.new(__FILE__).dirname / "tomp4"
 
     unless tomp4_script.exist?
-      return {
-        success: false,
-        converted_info: nil,
-        log: "Error: tomp4 script not found at #{tomp4_script}"
-      }
+      puts "  Error: tomp4 script not found at #{tomp4_script}"
+      return { success: false, converted_info: nil }
     end
 
     temp_dir = Dir.mktmpdir("video_converter_")
@@ -182,8 +163,7 @@ class VideoConverter
       puts "  Debug - tomp4 script: #{tomp4_script}" if @options[:verbose]
 
       begin
-        stdout, stderr, status = Open3.capture3(tomp4_script.to_s, *args)
-        output = stdout + stderr
+        _stdout, _stderr, status = Open3.capture3(tomp4_script.to_s, *args)
         exit_status = status.exitstatus
 
         if exit_status == 0
@@ -212,43 +192,18 @@ class VideoConverter
             end
           end
 
-          {
-            success: true,
-            converted_info: converted_info,
-            log: output
-          }
+          { success: true, converted_info: converted_info }
         else
-          {
-            success: false,
-            converted_info: nil,
-            log: "Conversion failed with exit status #{exit_status}: #{output}"
-          }
+          puts "  tomp4 exited with status #{exit_status}"
+          { success: false, converted_info: nil }
         end
       rescue => e
-        {
-          success: false,
-          converted_info: nil,
-          log: "Error executing tomp4: #{e.message}"
-        }
+        puts "  Error executing tomp4: #{e.message}"
+        { success: false, converted_info: nil }
       end
     ensure
       FileUtils.remove_entry(temp_dir) if Dir.exist?(temp_dir)
     end
-  end
-
-  def create_log_entry(file_path, source_info, result_info, conversion_log)
-    {
-      source: source_info,
-      result: result_info,
-      conversionLog: conversion_log
-    }
-  end
-
-  def write_log_file
-    log_path = Pathname.new(__FILE__).dirname / @log_filename
-
-    File.write(log_path, JSON.pretty_generate(@log_entries))
-    puts "Log written to: #{log_path}"
   end
 end
 
