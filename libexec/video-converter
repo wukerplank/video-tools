@@ -1,0 +1,299 @@
+#!/usr/bin/env ruby
+
+require 'bundler/setup'
+require 'json'
+require 'logger'
+require 'fileutils'
+require 'pathname'
+require 'time'
+require 'tmpdir'
+require 'open3'
+require 'slop'
+require 'streamio-ffmpeg'
+
+class VideoConverter
+  VIDEO_EXTENSIONS = %w[.mp4 .avi .mov .mkv .wmv .flv .webm .m4v .3gp .ogv .mpg .mpeg]
+  HEVC_CODECS = %w[hevc h265 x265 hevc_videotoolbox]
+
+  def initialize(directory, options = {})
+    @directory = Pathname.new(directory)
+    @log_entries = []
+    @log_filename = Time.now.strftime("%Y-%m-%d_%H-%M-%S.json")
+    @options = options
+  end
+
+  def process_directory
+    puts "Processing directory: #{@directory}"
+    puts "Log file: #{@log_filename}"
+
+    video_files = find_video_files
+    puts "Found #{video_files.length} video files"
+
+    video_files.each do |file_path|
+      process_video_file(file_path)
+    end
+
+    write_log_file
+  end
+
+  private
+
+  def find_video_files
+    return [] unless @directory.exist? && @directory.directory?
+
+    pattern = @options[:recursive] ? '**/*' : '*'
+    @directory.glob(pattern).select do |file|
+      file.file? && VIDEO_EXTENSIONS.include?(file.extname.downcase)
+    end
+  end
+
+  def process_video_file(file_path)
+    puts "Processing: #{file_path.basename}"
+
+    begin
+      video_info = extract_video_info(file_path)
+
+      if should_skip_hevc?(video_info)
+        puts "  Skipping HEVC file: #{file_path.basename}"
+        log_entry = create_log_entry(file_path, video_info, nil, "Skipped - already HEVC")
+        @log_entries << log_entry
+        return
+      end
+
+      conversion_result = convert_with_tomp4(file_path, video_info)
+
+      if conversion_result[:success]
+        puts "  Converted: #{file_path.basename}"
+        log_entry = create_log_entry(file_path, video_info, conversion_result[:converted_info], conversion_result[:log])
+        @log_entries << log_entry
+      else
+        puts "  Conversion failed: #{file_path.basename}"
+        log_entry = create_log_entry(file_path, video_info, nil, conversion_result[:log])
+        @log_entries << log_entry
+      end
+
+    rescue => e
+      puts "  Error processing #{file_path.basename}: #{e.message}"
+      error_info = { filename: file_path.basename.to_s, codec: "unknown", resolution: "unknown", filesize: 0 }
+      log_entry = create_log_entry(file_path, error_info, nil, "Error: #{e.message}")
+      @log_entries << log_entry
+    end
+  end
+
+  def extract_video_info(file_path)
+    movie = FFMPEG::Movie.new(file_path.to_s)
+
+    {
+      filename: file_path.basename.to_s,
+      codec: movie.video_codec || "unknown",
+      width: movie.width,
+      height: movie.height,
+      resolution: "#{movie.width}x#{movie.height}",
+      filesize: file_path.size
+    }
+  end
+
+  def is_hevc_codec?(codec)
+    return false unless codec
+
+    HEVC_CODECS.any? { |hevc_codec| codec.downcase.include?(hevc_codec) }
+  end
+
+  def should_skip_hevc?(video_info)
+    return false unless is_hevc_codec?(video_info[:codec])
+
+    width_shrinks  = @options[:width]  && video_info[:width]  && @options[:width]  < video_info[:width]
+    height_shrinks = @options[:height] && video_info[:height] && @options[:height] < video_info[:height]
+
+    !(width_shrinks || height_shrinks)
+  end
+
+  VALIDATION_RULES = [
+    {
+      name: :min_filesize,
+      skip_if: :ignore_too_small_result,
+      check: ->(path, _info, _ctx) {
+        size = path.size
+        size < 1024 * 1024 ? "Converted file too small (#{size} bytes)" : :ok
+      }
+    },
+    {
+      name: :hevc_codec,
+      check: ->(_path, info, ctx) {
+        ctx.send(:is_hevc_codec?, info[:codec]) ? :ok : "Converted file is not HEVC (codec: #{info[:codec]})"
+      }
+    },
+    {
+      name: :valid_duration,
+      check: ->(path, _info, _ctx) {
+        begin
+          movie = FFMPEG::Movie.new(path.to_s)
+          (movie.duration.nil? || movie.duration <= 0) ? "Invalid video duration" : :ok
+        rescue => e
+          "Could not read video metadata: #{e.message}"
+        end
+      }
+    }
+  ].freeze
+
+  def validate_converted_file(_original_path, converted_path, _source_info, converted_info)
+    return false unless converted_path.exist?
+
+    VALIDATION_RULES.each do |rule|
+      next if rule[:skip_if] && @options[rule[:skip_if]]
+
+      result = rule[:check].call(converted_path, converted_info, self)
+      next if result == :ok
+
+      puts "    Validation failed: #{result}"
+      return false
+    end
+
+    puts "    Validation passed"
+    true
+  end
+
+  def convert_with_tomp4(file_path, source_info)
+    tomp4_script = Pathname.new(__FILE__).dirname / "tomp4"
+
+    unless tomp4_script.exist?
+      return {
+        success: false,
+        converted_info: nil,
+        log: "Error: tomp4 script not found at #{tomp4_script}"
+      }
+    end
+
+    temp_dir = Dir.mktmpdir("video_converter_")
+    temp_output_path = Pathname.new(temp_dir) / "#{file_path.basename.sub_ext('.mp4')}"
+
+    begin
+      args = []
+      args << "--width" << @options[:width].to_s if @options[:width]
+      args << "--height" << @options[:height].to_s if @options[:height]
+      args << "--quality" << @options[:quality].to_s if @options[:quality]
+      args << "--overwrite" if @options[:overwrite]
+      args << "--verbose" if @options[:verbose]
+      args << "--output" << temp_output_path.to_s
+      args << file_path.to_s
+
+      puts "  Debug - Args array: #{args.inspect}" if @options[:verbose]
+      puts "  Debug - Temp output path: #{temp_output_path}" if @options[:verbose]
+      puts "  Debug - tomp4 script: #{tomp4_script}" if @options[:verbose]
+
+      begin
+        stdout, stderr, status = Open3.capture3(tomp4_script.to_s, *args)
+        output = stdout + stderr
+        exit_status = status.exitstatus
+
+        if exit_status == 0
+          converted_info = nil
+
+          if temp_output_path.exist?
+            converted_info = extract_video_info(temp_output_path)
+            converted_size = temp_output_path.size
+            original_size = file_path.size
+
+            if converted_size >= original_size
+              puts "  Skipped: converted file not smaller than original (#{original_size} -> #{converted_size} bytes) - discarding"
+              converted_info[:filename] = file_path.basename.to_s
+              converted_info[:filesize] = original_size
+            elsif validate_converted_file(file_path, temp_output_path, source_info, converted_info)
+              FileUtils.mv(temp_output_path, file_path)
+              converted_info[:filename] = file_path.basename.to_s
+              converted_info[:filesize] = file_path.size
+              puts "  Replaced original with converted file: #{file_path.basename}"
+            else
+              final_output_path = file_path.sub_ext('.converted.mp4')
+              FileUtils.mv(temp_output_path, final_output_path)
+              converted_info[:filename] = final_output_path.basename.to_s
+              converted_info[:filesize] = final_output_path.size
+              puts "  Validation failed - kept converted file as: #{final_output_path.basename}"
+            end
+          end
+
+          {
+            success: true,
+            converted_info: converted_info,
+            log: output
+          }
+        else
+          {
+            success: false,
+            converted_info: nil,
+            log: "Conversion failed with exit status #{exit_status}: #{output}"
+          }
+        end
+      rescue => e
+        {
+          success: false,
+          converted_info: nil,
+          log: "Error executing tomp4: #{e.message}"
+        }
+      end
+    ensure
+      FileUtils.remove_entry(temp_dir) if Dir.exist?(temp_dir)
+    end
+  end
+
+  def create_log_entry(file_path, source_info, result_info, conversion_log)
+    {
+      source: source_info,
+      result: result_info,
+      conversionLog: conversion_log
+    }
+  end
+
+  def write_log_file
+    log_path = Pathname.new(__FILE__).dirname / @log_filename
+
+    File.write(log_path, JSON.pretty_generate(@log_entries))
+    puts "Log written to: #{log_path}"
+  end
+end
+
+opts = Slop.parse do |o|
+  o.banner = 'Usage: video-converter [options] <directory>'
+
+  o.integer '-w', '--width', 'Scale the video down to this width'
+  o.integer '-h', '--height', 'Scale the video down to this height'
+  o.integer '-q', '--quality', 'Sets the quality of the output video (0: very good, 50: very lossy, default: 22)', default: 22
+  o.on '-y', '--overwrite', 'Overwrite existing files'
+  o.on '-r', '--recursive', 'Dive down into sub-folders'
+  o.on '-v', '--verbose', 'Enable verbose mode'
+  o.on '--ignore-too-small-result', 'Skip the minimum-filesize check and overwrite the original anyway'
+  o.on '--help', 'Show this help message'
+end
+
+if __FILE__ == $0
+  if opts.help?
+    puts opts
+    exit 0
+  end
+
+  if opts.arguments.empty?
+    puts opts
+    puts "\nError: Directory argument is required"
+    exit 1
+  end
+
+  directory = opts.arguments[0]
+
+  unless Dir.exist?(directory)
+    puts "Error: Directory '#{directory}' does not exist"
+    exit 1
+  end
+
+  options = {
+    width: opts[:width],
+    height: opts[:height],
+    quality: opts[:quality],
+    overwrite: opts.overwrite?,
+    recursive: opts.recursive?,
+    verbose: opts.verbose?,
+    ignore_too_small_result: opts.ignore_too_small_result?
+  }
+
+  converter = VideoConverter.new(directory, options)
+  converter.process_directory
+end

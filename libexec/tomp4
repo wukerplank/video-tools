@@ -1,0 +1,149 @@
+#!/usr/bin/env ruby
+
+require 'bundler/setup'
+require 'streamio-ffmpeg'
+require 'slop'
+require 'logger'
+
+require 'open3'
+require 'shellwords'
+
+$opts = Slop.parse do |o|
+  o.banner = 'Usage: tomp4 [options] [file|folder]'
+
+  o.string '-o', '--output', 'Target filename'
+  o.integer '-w', '--width', 'Scale the video down to this width'
+  o.integer '-h', '--height', 'Scale the video down to this height'
+  o.integer '-q', '--quality', 'Sets the quality of the output video (0: very good, 50: very lossy, default: 22)', default: 22
+  o.on '-r', '--recursive', 'Dives down into sub-folders'
+  o.on '-v', '--verbose', 'Enable verbose mode'
+  o.on '-y', '--overwrite', 'Overwrite existing files'
+  o.on '-s', '--simulate', 'Don\'t do the work, just print the ffmpeg command'
+  o.on '-p', '--passthrough', 'Don\'t convert to hevc, only pass the stream into a mp4 container'
+  o.string '-c', '--crop', 'Crop the video with these parameters top:bottom:left:right'
+end
+
+FFMPEG_PATH = `which ffmpeg`.chomp
+raise "ffmpeg not found" if FFMPEG_PATH == ""
+
+PASSTHROUGH_OPTIONS = " -vcodec copy -metadata:s:v language=eng -metadata:s:v title=\"Video Track\" "
+HEVC_OPTIONS  = " #{PASSTHROUGH_OPTIONS} -tag:v hvc1"
+AUDIO_OPTIONS = " -acodec aac -ac 2 -strict experimental -ab 160k "
+
+SCRIPT_DIR = File.expand_path(File.dirname(__FILE__))
+HANDBRAKE_PATH = `which HandBrakeCLI`.chomp
+HANDBRAKE_PRESETS_PATH ||= File.join(SCRIPT_DIR, "UserPresets.json")
+
+HANDBRAKE_VIDEO_OPTIONS = " --preset-import-file \"#{HANDBRAKE_PRESETS_PATH}\" -Z \"HEVC Default (1080p)\""
+HANDBRAKE_AUDIO_OPTIONS = " --audio-lang-list=any "
+HANDBRAKE_ENABLED = (HANDBRAKE_PATH != "" && File.exist?(HANDBRAKE_PRESETS_PATH))
+
+puts "\n\nNo HandBrakeCLI found - using ffmpeg.\n\n" unless HANDBRAKE_ENABLED
+
+def convert_folder(folder)
+    Dir.glob(File.join(Shellwords.shellescape(folder), '*')).sort.each do |e|
+    puts e
+    if File.directory?(e) && $opts.recursive?
+      convert_folder(e)
+    elsif File.file?(e) && e.match(/.*\.mkv$/i)
+      convert_file(e)
+    end
+  end
+end
+
+def convert_file(filename)
+  puts "\n\n  Converting #{filename}\n\n"
+
+  movie = FFMPEG::Movie.new(filename)
+
+  is_h264 = movie.metadata[:streams].detect { |stream| stream[:codec_type] == "video" && stream[:codec_name] == "h264" }
+  is_hevc = movie.metadata[:streams].detect { |stream| stream[:codec_type] == "video" && stream[:codec_name] == "hevc" }
+
+  if movie.width == 0 && movie.height == 0
+    puts "\nCould not parse ffmpeg's output for #{filename} :-(\n\n\n"
+    return
+  end
+
+  puts "    Input: #{movie.width}x#{movie.height} (#{movie.metadata[:streams].detect { |stream| stream[:codec_type] == "video"}[:codec_name]})"
+
+  target_width = movie.width
+  target_height = movie.height
+
+  if $opts.width?
+    target_width = $opts[:width]
+    if movie.width < $opts[:width]
+      target_width = movie.width
+    end
+
+    target_height = (movie.height * (target_width.to_f / movie.width.to_f)).to_i
+    target_height = target_height + 1 if target_height % 2 == 1
+  end
+
+  if $opts.height?
+    target_height = $opts[:height]
+    if movie.height < $opts[:height]
+      target_height = movie.height
+    end
+
+    target_width = (movie.width * (target_height.to_f / movie.height.to_f)).to_i
+    target_width = target_width +1 if target_width % 2 == 1
+  end
+
+  puts "    Output: #{target_width}x#{target_height} (hevc)"
+
+  video_conversion_options = " -vcodec libx264"
+  video_conversion_options<< " -preset slow -crf #{$opts[:quality]} -maxrate 10000000 -bufsize 10000000 -b:v 1200k -f mp4 -threads 0"
+  video_conversion_options<< " -movflags +faststart"
+  video_conversion_options<< " -s #{target_width}x#{target_height}" if $opts.width? || $opts.height?
+
+  new_filename = $opts[:output].nil? ? filename.gsub(/\A(.*)(\..*)\z/i, "\\1.mp4") : $opts[:output]
+
+  if new_filename == filename
+    raise "Source and target are the same"
+  end
+
+  video_options = if $opts.passthrough? && !is_hevc
+                    PASSTHROUGH_OPTIONS
+                  elsif is_hevc && !$opts.width? && !$opts.height? && !$opts.quality?
+                    HEVC_OPTIONS
+                  else
+                    video_conversion_options
+                  end
+  command = "#{FFMPEG_PATH} -i %s #{video_options} #{AUDIO_OPTIONS} #{$opts.overwrite? ? "-y" : ""} %s"
+  command = command % [Shellwords.shellescape(filename), Shellwords.shellescape(new_filename)]
+
+  handbrake_command = nil
+  if HANDBRAKE_ENABLED
+
+    handbrake_options = ""
+    handbrake_options<< " -w #{target_width} --modulus 2 --keep-display-aspect " if $opts.width?
+    handbrake_options<< " -q #{$opts[:quality]} " if $opts.quality?
+    handbrake_options<< " --crop-mode custom --crop #{$opts[:crop]}" if $opts.crop?
+
+    handbrake_command = "#{HANDBRAKE_PATH} #{HANDBRAKE_VIDEO_OPTIONS} #{HANDBRAKE_AUDIO_OPTIONS} -i %s #{handbrake_options} -o %s"
+    handbrake_command = handbrake_command % [Shellwords.shellescape(filename), Shellwords.shellescape(new_filename)]
+  end
+
+  unless $opts.simulate?
+    use_handbrake = HANDBRAKE_ENABLED && !$opts.passthrough? && !(is_hevc && !$opts.width? && !$opts.height? && !$opts.quality?)
+    use_handbrake ? `#{handbrake_command}` : `#{command}`
+  else
+    puts "\n\n   FFMPEG Command: #{command}\n\n"
+    puts "HandBrake Command: #{handbrake_command}\n\n" if handbrake_command
+    use_handbrake = HANDBRAKE_ENABLED && !$opts.passthrough? && !(is_hevc && !$opts.width? && !$opts.height? && !$opts.quality?)
+    puts "Would go with #{use_handbrake ? "HandBrakeCLI" : "ffmpeg"}\n\n"
+  end
+end
+
+if $opts.arguments.length > 0
+
+  $opts.arguments.each do |argument|
+    if File.file?(File.expand_path(argument))
+      convert_file(File.expand_path(argument))
+    elsif File.directory?(File.expand_path(argument))
+      convert_folder(File.expand_path(argument))
+    end
+  end
+else
+  puts $opts
+end
