@@ -15,8 +15,16 @@ The installer detects all three and prints install hints for whatever is missing
 
 ## Install
 
+One-liner:
+
 ```sh
-git clone <this-repo> video-tools
+curl -fsSL https://raw.githubusercontent.com/wukerplank/video-tools/main/install.sh | bash
+```
+
+Or clone and run:
+
+```sh
+git clone https://github.com/wukerplank/video-tools.git
 cd video-tools
 ./install.sh
 ```

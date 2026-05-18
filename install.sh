@@ -3,15 +3,33 @@ set -euo pipefail
 
 # install.sh — installs video-tools (video-converter, tomp4) to $PREFIX
 # Defaults to $HOME/.local. Override with PREFIX=/some/path ./install.sh
+#
+# Also runnable via:
+#   curl -fsSL https://raw.githubusercontent.com/wukerplank/video-tools/main/install.sh | bash
 
 PROJECT_NAME="video-tools"
+REPO_URL="https://github.com/wukerplank/video-tools.git"
 SCRIPTS=(video-converter tomp4)
 
 PREFIX="${PREFIX:-$HOME/.local}"
 BIN_DIR="$PREFIX/bin"
 SHARE_DIR="$PREFIX/share/$PROJECT_NAME"
 
-SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Resolve the script's source dir. When piped via `curl | bash`, BASH_SOURCE is
+# empty and this resolves to "" — that's our cue to bootstrap by cloning.
+SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-}")" 2>/dev/null && pwd || true)"
+
+if [ -z "$SOURCE_DIR" ] || [ ! -f "$SOURCE_DIR/libexec/video-converter" ]; then
+  if ! command -v git >/dev/null 2>&1; then
+    echo "Error: git is required for the piped install. Install git first." >&2
+    exit 1
+  fi
+  TMP_CLONE="$(mktemp -d)"
+  trap 'rm -rf "$TMP_CLONE"' EXIT
+  echo "Bootstrapping: cloning $REPO_URL into $TMP_CLONE"
+  git clone --depth 1 "$REPO_URL" "$TMP_CLONE" >/dev/null
+  exec bash "$TMP_CLONE/install.sh" "$@"
+fi
 
 bold() { printf "\033[1m%s\033[0m\n" "$*"; }
 warn() { printf "\033[33m[warn]\033[0m %s\n" "$*"; }
