@@ -40,7 +40,7 @@ HANDBRAKE_VIDEO_OPTIONS = " --preset-import-file \"#{HANDBRAKE_PRESETS_PATH}\" -
 HANDBRAKE_AUDIO_OPTIONS = " --audio-lang-list=any "
 HANDBRAKE_ENABLED = (HANDBRAKE_PATH != "" && File.exist?(HANDBRAKE_PRESETS_PATH))
 
-puts "\n\nNo HandBrakeCLI found - using ffmpeg.\n\n" unless HANDBRAKE_ENABLED
+puts "\n\nNo HandBrakeCLI found - only --passthrough and HEVC remux will work.\n\n" unless HANDBRAKE_ENABLED
 
 def convert_folder(folder)
     Dir.glob(File.join(Shellwords.shellescape(folder), '*')).sort.each do |e|
@@ -93,47 +93,34 @@ def convert_file(filename)
 
   puts "    Output: #{target_width}x#{target_height} (hevc)"
 
-  video_conversion_options = " -vcodec libx264"
-  video_conversion_options<< " -preset slow -crf #{$opts[:quality]} -maxrate 10000000 -bufsize 10000000 -b:v 1200k -f mp4 -threads 0"
-  video_conversion_options<< " -movflags +faststart"
-  video_conversion_options<< " -s #{target_width}x#{target_height}" if $opts.width? || $opts.height?
-
   new_filename = $opts[:output].nil? ? filename.gsub(/\A(.*)(\..*)\z/i, "\\1.mp4") : $opts[:output]
 
   if new_filename == filename
     raise "Source and target are the same"
   end
 
-  video_options = if $opts.passthrough? && !is_hevc
-                    PASSTHROUGH_OPTIONS
-                  elsif is_hevc && !$opts.width? && !$opts.height? && !$opts.quality?
-                    HEVC_OPTIONS
-                  else
-                    video_conversion_options
-                  end
-  command = "#{FFMPEG_PATH} -i %s #{video_options} #{AUDIO_OPTIONS} #{$opts.overwrite? ? "-y" : ""} %s"
-  command = command % [Shellwords.shellescape(filename), Shellwords.shellescape(new_filename)]
+  ffmpeg_remux = $opts.passthrough? || (is_hevc && !$opts.width? && !$opts.height? && !$opts.quality?)
 
-  handbrake_command = nil
-  if HANDBRAKE_ENABLED
+  if ffmpeg_remux
+    video_options = is_hevc ? HEVC_OPTIONS : PASSTHROUGH_OPTIONS
+    chosen_command = "#{FFMPEG_PATH} -i %s #{video_options} #{AUDIO_OPTIONS} #{$opts.overwrite? ? "-y" : ""} %s"
+    chosen_command = chosen_command % [Shellwords.shellescape(filename), Shellwords.shellescape(new_filename)]
+  else
+    raise "HandBrakeCLI required for conversion" unless HANDBRAKE_ENABLED
 
     handbrake_options = ""
     handbrake_options<< " -w #{target_width} --modulus 2 --keep-display-aspect " if $opts.width?
     handbrake_options<< " -q #{$opts[:quality]} " if $opts.quality?
     handbrake_options<< " --crop-mode custom --crop #{$opts[:crop]}" if $opts.crop?
 
-    handbrake_command = "#{HANDBRAKE_PATH} #{HANDBRAKE_VIDEO_OPTIONS} #{HANDBRAKE_AUDIO_OPTIONS} -i %s #{handbrake_options} -o %s"
-    handbrake_command = handbrake_command % [Shellwords.shellescape(filename), Shellwords.shellescape(new_filename)]
+    chosen_command = "#{HANDBRAKE_PATH} #{HANDBRAKE_VIDEO_OPTIONS} #{HANDBRAKE_AUDIO_OPTIONS} -i %s #{handbrake_options} -o %s"
+    chosen_command = chosen_command % [Shellwords.shellescape(filename), Shellwords.shellescape(new_filename)]
   end
 
-  unless $opts.simulate?
-    use_handbrake = HANDBRAKE_ENABLED && !$opts.passthrough? && !(is_hevc && !$opts.width? && !$opts.height? && !$opts.quality?)
-    use_handbrake ? `#{handbrake_command}` : `#{command}`
+  if $opts.simulate?
+    puts "\n\n   #{ffmpeg_remux ? 'FFMPEG' : 'HandBrake'} Command: #{chosen_command}\n\n"
   else
-    puts "\n\n   FFMPEG Command: #{command}\n\n"
-    puts "HandBrake Command: #{handbrake_command}\n\n" if handbrake_command
-    use_handbrake = HANDBRAKE_ENABLED && !$opts.passthrough? && !(is_hevc && !$opts.width? && !$opts.height? && !$opts.quality?)
-    puts "Would go with #{use_handbrake ? "HandBrakeCLI" : "ffmpeg"}\n\n"
+    `#{chosen_command}`
   end
 end
 
