@@ -99,11 +99,11 @@ else
   esac
 fi
 
-# 5. Check HandBrakeCLI (optional)
+# 5. Check HandBrakeCLI (required for transcoding; passthrough/HEVC-remux modes still work without it)
 if command -v HandBrakeCLI >/dev/null 2>&1; then
-  info "HandBrakeCLI $(HandBrakeCLI --version 2>&1 | head -n1 | awk '{print $NF}') ✓ (optional)"
+  info "HandBrakeCLI $(HandBrakeCLI --version 2>&1 | head -n1 | awk '{print $NF}') ✓"
 else
-  info "HandBrakeCLI not found (optional — falls back to ffmpeg)."
+  warn "HandBrakeCLI NOT found — only --passthrough and HEVC remux will work without it."
   case "$PLATFORM" in
     linux)
       echo "  Install with: sudo apt install handbrake-cli   (or distro equivalent)"

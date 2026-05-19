@@ -2,14 +2,14 @@
 
 Two Ruby command-line utilities for transcoding video to HEVC/MP4.
 
-- **`tomp4`** — Convert a single video file (or a folder of `.mkv` files) to HEVC-in-MP4. Uses `HandBrakeCLI` when available, falls back to `ffmpeg`.
-- **`video-converter`** — Walk a directory, detect non-HEVC video files, run them through `tomp4`, validate the result (HEVC codec, sane filesize, valid duration), and replace originals in-place. Skips files that wouldn't shrink. Writes a JSON log.
+- **`tomp4`** — Convert a single video file (or a folder of common video formats) to HEVC-in-MP4. Uses `HandBrakeCLI` for transcoding; `ffmpeg` handles passthrough and HEVC remux when no re-encode is needed.
+- **`video-converter`** — Walk a directory, detect non-HEVC video files, run them through `tomp4`, validate the result (HEVC codec, sane filesize, valid duration), and replace originals in-place. Skips files that wouldn't shrink.
 
 ## Prerequisites
 
 - **Ruby >= 2.7** with `bundler` (ships with modern Ruby).
-- **ffmpeg** on `PATH` (required).
-- **HandBrakeCLI** on `PATH` (optional, used when present).
+- **ffmpeg** on `PATH` (required — used for passthrough and HEVC remux).
+- **HandBrakeCLI** on `PATH` (required for transcoding; without it only `--passthrough` and HEVC remux work).
 
 The installer detects all three and prints install hints for whatever is missing.
 

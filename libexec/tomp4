@@ -6,9 +6,8 @@ ENV['BUNDLE_GEMFILE'] ||= File.expand_path('../Gemfile', SCRIPT_DIR)
 require 'bundler/setup'
 require 'streamio-ffmpeg'
 require 'slop'
-require 'logger'
 
-require 'open3'
+require 'pathname'
 require 'shellwords'
 
 $opts = Slop.parse do |o|
@@ -47,7 +46,7 @@ def convert_folder(folder)
     puts e
     if File.directory?(e) && $opts.recursive?
       convert_folder(e)
-    elsif File.file?(e) && e.match(/.*\.mkv$/i)
+    elsif File.file?(e) && e.match?(/\.(?:mkv|avi|mov|wmv|flv|webm|m4v|3gp|ogv|mpg|mpeg)\z/i)
       convert_file(e)
     end
   end
@@ -58,7 +57,6 @@ def convert_file(filename)
 
   movie = FFMPEG::Movie.new(filename)
 
-  is_h264 = movie.metadata[:streams].detect { |stream| stream[:codec_type] == "video" && stream[:codec_name] == "h264" }
   is_hevc = movie.metadata[:streams].detect { |stream| stream[:codec_type] == "video" && stream[:codec_name] == "hevc" }
 
   if movie.width == 0 && movie.height == 0
@@ -93,7 +91,7 @@ def convert_file(filename)
 
   puts "    Output: #{target_width}x#{target_height} (hevc)"
 
-  new_filename = $opts[:output].nil? ? filename.gsub(/\A(.*)(\..*)\z/i, "\\1.mp4") : $opts[:output]
+  new_filename = $opts[:output] || Pathname.new(filename).sub_ext('.mp4').to_s
 
   if new_filename == filename
     raise "Source and target are the same"
