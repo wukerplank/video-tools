@@ -13,7 +13,7 @@ SHARE_DIR="$PREFIX/share/$PROJECT_NAME"
 info() { printf "[info] %s\n" "$*"; }
 
 for name in "${SCRIPTS[@]}"; do
-  if [ -f "$BIN_DIR/$name" ]; then
+  if [ -L "$BIN_DIR/$name" ] || [ -f "$BIN_DIR/$name" ]; then
     info "Removing $BIN_DIR/$name"
     rm -f "$BIN_DIR/$name"
   fi

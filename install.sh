@@ -125,11 +125,11 @@ mkdir -p "$BIN_DIR" "$SHARE_DIR"
 # 7. Copy payload
 info "Copying files to $SHARE_DIR …"
 mkdir -p "$SHARE_DIR/libexec"
-cp "$SOURCE_DIR/Gemfile" "$SHARE_DIR/"
-[ -f "$SOURCE_DIR/Gemfile.lock" ] && cp "$SOURCE_DIR/Gemfile.lock" "$SHARE_DIR/"
-cp "$SOURCE_DIR/libexec/video-converter" "$SHARE_DIR/libexec/"
-cp "$SOURCE_DIR/libexec/tomp4"           "$SHARE_DIR/libexec/"
-cp "$SOURCE_DIR/libexec/UserPresets.json" "$SHARE_DIR/libexec/"
+cp -p "$SOURCE_DIR/Gemfile" "$SHARE_DIR/"
+[ -f "$SOURCE_DIR/Gemfile.lock" ] && cp -p "$SOURCE_DIR/Gemfile.lock" "$SHARE_DIR/"
+cp -p "$SOURCE_DIR/libexec/video-converter" "$SHARE_DIR/libexec/"
+cp -p "$SOURCE_DIR/libexec/tomp4"           "$SHARE_DIR/libexec/"
+cp -p "$SOURCE_DIR/libexec/UserPresets.json" "$SHARE_DIR/libexec/"
 chmod 755 "$SHARE_DIR/libexec/video-converter" "$SHARE_DIR/libexec/tomp4"
 
 # 8. Bundle install
