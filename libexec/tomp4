@@ -43,7 +43,7 @@ HANDBRAKE_ENABLED = (HANDBRAKE_PATH != "" && File.exist?(HANDBRAKE_PRESETS_PATH)
 puts "\n\nNo HandBrakeCLI found - only --passthrough and HEVC remux will work.\n\n" unless HANDBRAKE_ENABLED
 
 def convert_folder(folder)
-    Dir.glob(File.join(Shellwords.shellescape(folder), '*')).sort.each do |e|
+    Dir.glob(File.join(folder, '*')).sort.each do |e|
     puts e
     if File.directory?(e) && $opts.recursive?
       convert_folder(e)
@@ -120,7 +120,7 @@ def convert_file(filename)
   if $opts.simulate?
     puts "\n\n   #{ffmpeg_remux ? 'FFMPEG' : 'HandBrake'} Command: #{chosen_command}\n\n"
   else
-    `#{chosen_command}`
+    exit($?.exitstatus || 1) unless system(chosen_command)
   end
 end
 

@@ -28,7 +28,8 @@ if [ -z "$SOURCE_DIR" ] || [ ! -f "$SOURCE_DIR/libexec/video-converter" ]; then
   trap 'rm -rf "$TMP_CLONE"' EXIT
   echo "Bootstrapping: cloning $REPO_URL into $TMP_CLONE"
   git clone --depth 1 "$REPO_URL" "$TMP_CLONE" >/dev/null
-  exec bash "$TMP_CLONE/install.sh" "$@"
+  bash "$TMP_CLONE/install.sh" "$@"
+  exit $?
 fi
 
 bold() { printf "\033[1m%s\033[0m\n" "$*"; }

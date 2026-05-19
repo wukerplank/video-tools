@@ -182,10 +182,12 @@ class VideoConverter
               converted_info[:filename] = file_path.basename.to_s
               converted_info[:filesize] = original_size
             elsif validate_converted_file(file_path, temp_output_path, source_info, converted_info)
-              FileUtils.mv(temp_output_path, file_path)
-              converted_info[:filename] = file_path.basename.to_s
-              converted_info[:filesize] = file_path.size
-              puts "  Replaced original with converted file: #{file_path.basename}"
+              target_path = file_path.sub_ext('.mp4')
+              FileUtils.mv(temp_output_path, target_path)
+              file_path.delete if file_path.exist? && file_path != target_path
+              converted_info[:filename] = target_path.basename.to_s
+              converted_info[:filesize] = target_path.size
+              puts "  Replaced original with converted file: #{target_path.basename}"
             else
               final_output_path = file_path.sub_ext('.converted.mp4')
               FileUtils.mv(temp_output_path, final_output_path)
@@ -215,7 +217,7 @@ opts = Slop.parse do |o|
 
   o.integer '-w', '--width', 'Scale the video down to this width'
   o.integer '-h', '--height', 'Scale the video down to this height'
-  o.integer '-q', '--quality', 'Sets the quality of the output video (0: very good, 50: very lossy, default: 22)', default: 22
+  o.integer '-q', '--quality', 'Sets the quality of the output video (0: very good, 50: very lossy); when unset, tomp4 picks its own default and can fast-path HEVC sources via remux'
   o.on '-y', '--overwrite', 'Overwrite existing files'
   o.on '-r', '--recursive', 'Dive down into sub-folders'
   o.on '-v', '--verbose', 'Enable verbose mode'
