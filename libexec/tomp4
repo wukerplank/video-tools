@@ -51,7 +51,7 @@ def convert_folder(folder)
     puts e
     if File.directory?(e) && $opts.recursive?
       convert_folder(e)
-    elsif File.file?(e) && e.match?(/\.(?:mkv|avi|mov|wmv|flv|webm|m4v|3gp|ogv|mpg|mpeg)\z/i)
+    elsif File.file?(e) && e.match?(/\.(?:mkv|avi|mov|wmv|flv|webm|m4v|3gp|ogv|mpg|mpeg|divx)\z/i)
       convert_file(e)
     end
   end

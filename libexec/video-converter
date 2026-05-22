@@ -13,7 +13,7 @@ require 'slop'
 require 'streamio-ffmpeg'
 
 class VideoConverter
-  VIDEO_EXTENSIONS = %w[.mp4 .avi .mov .mkv .wmv .flv .webm .m4v .3gp .ogv .mpg .mpeg]
+  VIDEO_EXTENSIONS = %w[.mp4 .avi .mov .mkv .wmv .flv .webm .m4v .3gp .ogv .mpg .mpeg, .divx]
   HEVC_CODECS = %w[hevc h265 x265 hevc_videotoolbox]
 
   def initialize(directory, options = {})
